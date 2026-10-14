@@ -1,4 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+
+#import CarInput using from .models
+from .models import CarInput
 
 app = FastAPI(title="Car Catalogue Api")
 
@@ -104,3 +107,63 @@ def car_by_name(car_name: str = ""):
             matching_cars.append(car)
 
     return matching_cars
+
+@app.get("/api/cars/{car_id}")
+def get_car(car_id: int):
+    """Return one car, or respond with 404 if its ID does not exist."""
+    # The value from the URL arrives here as an integer.
+    for car in CARS:
+        if car["id"] == car_id:             
+            return car
+
+    # Reaching this line means we checked every car without finding a match.
+    # Raise an HTTP error instead of returning a successful response with no data.
+    raise HTTPException(
+        status_code=404,
+        detail="This car does not exist.",
+    )
+
+
+#POST ENDPOINT - CREATE A CAR
+@app.post("/api/cars", status_code=201)
+def create_car(car: CarInput):
+
+    next_id = max(
+        (car["id"] for car in CARS),
+        default=0,
+    ) +1
+
+    # Convert the validated Pydantic object into an ordinary python dictionary
+    new_car = car.model_dump()
+
+    new_car["id"] = next_id
+
+    CARS.append(new_car)
+
+    return new_car
+
+# PUT method - update a car
+@app.put("/api/cars/{car_id}")
+def update_car(car_id: int, data: CarInput):
+    """Replace a cars content while preserving it's ID"""
+    # enumerate() gives us both the list position (index) and the car at that position
+    for index, car in enumerate(CARS): 
+        if car["id"] == car_id:
+            #reuse the same validation rules as the create endpoint.
+            updated_car = data.model_dump()
+
+            #Editing the car doesnt/shouldnt change its id
+            updated_car["id"] = car_id
+
+            # Replace the existing dictionoary rather than appending one
+            CARS[index] = updated_car
+
+            return updated_car
+
+    # Updating a missing car does not create one
+    raise HTTPException(
+        status_code=404,
+        detail="This car doesnt exist."
+    )
+
+
