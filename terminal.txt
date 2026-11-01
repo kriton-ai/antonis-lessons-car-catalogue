@@ -1,0 +1,28 @@
+$carBody = @{
+    name         = 'Lesson Coupe'
+    category     = 'Coupe'
+    manufacturer = 'Toyota'
+    variant      = 'Lesson Edition'
+    description  = 'A sample coupe used to demonstrate the catalogue API during the lesson.'
+    tip          = 'Check the driving position before a test drive.'
+}
+
+$created = Invoke-RestMethod `
+    -Method Post `
+    -Uri "$base/api/cars" `
+    -ContentType 'application/json' `
+    -Body ($carBody | ConvertTo-Json)
+
+$carId = $created.id
+
+$created | ConvertTo-Json -Depth 10
+
+{
+  "name": "Lesson Coupe",
+  "category": "Coupe",
+  "manufacturer": "Toyota",
+  "variant": "Toyota",
+  "description": "A sample coupe used to demonstrate the catalogue API during the lesson.",
+  "tip": "Check the driving position before a test drive."
+}
+

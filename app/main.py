@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 
 #import CarInput using from .models
 from .models import CarInput
@@ -164,6 +164,24 @@ def update_car(car_id: int, data: CarInput):
     raise HTTPException(
         status_code=404,
         detail="This car doesnt exist."
+    )
+
+# DELETE Method - Remove an existing car
+@app.delete("/api/cars/{car_id}", status_code=204)
+def delete_car(car_id: int):
+    """Remove an existing car and return an empty sucecess response"""
+    for index, car in enumerate(CARS):
+        if car["id"] == car_id:
+            # Remove the matching dictionary from the shared in-memory list
+            del CARS[index]
+
+            # Return immediately: do not continue iterating after deletion
+            # HTTP 204 means success with no response body.
+            return Response(status_code=204)
+
+    raise HTTPException(
+        status_code=404,
+        detail="This car does not exist."
     )
 
 
