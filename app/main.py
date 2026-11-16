@@ -1,187 +1,86 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Response
 
-#import CarInput using from .models
+from . import db
+
 from .models import CarInput
 
-app = FastAPI(title="Car Catalogue Api")
 
-CARS = [
-    {
-        "id": 1,
-        "name": "Toyota Corolla",
-        "category": "Hatchback",
-        "manufacturer": "Toyota",
-        "variant": "1.8 Hybrid Design",
-        "description": (
-            "A compact hybrid hatchback with supportive seats, "
-            "easy controls, and a quiet cabin for everyday driving."
-        ),
-        "tip": "Try the hybrid system in slow traffic during a test drive.",
-    },
-    {
-        "id": 2,
-        "name": "Volvo XC60",
-        "category": "SUV",
-        "manufacturer": "Volvo",
-        "variant": "B5 Plus AWD",
-        "description": (
-            "A comfortable SUV with a spacious cabin. Take a drive "
-            "to explore the visibility and relaxed driving position."
-        ),
-        "tip": "Check the rear seats and boot space before a test drive.",
-    },
-    {
-        "id": 3,
-        "name": "Toyota GR86",
-        "category": "Coupe",
-        "manufacturer": "Toyota",
-        "variant": "2.4 Boxer Manual",
-        "description": (
-            "A compact sports coupe with responsive steering and a set "
-            "of simple controls designed around the driver."
-        ),
-        "tip": "Try the manual gearbox on a varied test-drive route.",
-    },
-]
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Prepare the database before the application accepts requests."""
+    db.initialize()
 
-# API -> the communication interface between clients and servers
-# endpoint -> a specific request / response that a client-server may do
+    # Startup is complete. FastAPI serves requests while execution is paused here.
+    yield
 
-# Health API endpoint
+    # Shutdown cleanup would go below yield if we needed it.
+    # Our database helpers already close their own connections.
+
+
+app = FastAPI(
+    title="Car Catalogue API",
+    lifespan=lifespan,
+)
+
+
 @app.get("/api/health")
 def health():
-    """Confirm that the application can respond to a 
-    request"""
-    return {"status":"ok"}
+    """Confirm that the application can respond."""
+    return {"status": "ok"}
 
 
-# An endpoint that returns ALL the CARS
 @app.get("/api/cars")
-def list_cars():
-    """Return every car in the catalogue"""
-    return CARS
+def list_cars(q: str = "", category: str | None = None):
+    """Read matching cars from the application database."""
+    return db.list_cars(q=q, category=category)
 
-# An API endpoint that will return cars matching the supplied search text and category
-
-@app.get("/api/filter_cars")
-def filter_cars(q: str = "", category: str | None = None):
-    """Return cars matching the supplied search text and category."""
-
-    # Sanitize user's input 
-    # 1 .strip -> remove leading and trailing whitespaces
-    # .casefold -> all lowercases
-
-    search_text = q.strip().casefold()
-    matching_cars = []
-
-    for car in CARS:
-        if category is not None and car["category"] != category:
-            continue
-
-        searchable_text = " ".join(
-            [
-                car["name"],
-                car["manufacturer"],
-                car["description"]
-            ]
-        ).casefold()
-
-        if search_text and search_text not in searchable_text:
-            continue
-
-        matching_cars.append(car)
-
-
-    return matching_cars
-
-
-
-# An API endpoint that returns Cars based on name
-
-@app.get("/api/car_by_name")
-def car_by_name(car_name: str = ""):
-    matching_cars = []
-
-    for car in CARS:
-        if  car_name == "" or car["name"] == car_name:
-            matching_cars.append(car)
-
-    return matching_cars
 
 @app.get("/api/cars/{car_id}")
 def get_car(car_id: int):
-    """Return one car, or respond with 404 if its ID does not exist."""
-    # The value from the URL arrives here as an integer.
-    for car in CARS:
-        if car["id"] == car_id:             
-            return car
+    """Read one car and translate a missing record into HTTP 404."""
+    car = db.get_car(car_id)
 
-    # Reaching this line means we checked every car without finding a match.
-    # Raise an HTTP error instead of returning a successful response with no data.
-    raise HTTPException(
-        status_code=404,
-        detail="This car does not exist.",
-    )
+    if car is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This car does not exist.",
+        )
 
+    return car
 
-#POST ENDPOINT - CREATE A CAR
+# Connect validated HTTP requests to database writes.
 @app.post("/api/cars", status_code=201)
-def create_car(car: CarInput):
+def create_car(data: CarInput):
+    """Validate the request, create a car, and return its stored content."""
+    # Pass plain data to the database layer.
+    return db.create_car(data.model_dump())
 
-    next_id = max(
-        (car["id"] for car in CARS),
-        default=0,
-    ) +1
 
-    # Convert the validated Pydantic object into an ordinary python dictionary
-    new_car = car.model_dump()
-
-    new_car["id"] = next_id
-
-    CARS.append(new_car)
-
-    return new_car
-
-# PUT method - update a car
 @app.put("/api/cars/{car_id}")
 def update_car(car_id: int, data: CarInput):
-    """Replace a cars content while preserving it's ID"""
-    # enumerate() gives us both the list position (index) and the car at that position
-    for index, car in enumerate(CARS): 
-        if car["id"] == car_id:
-            #reuse the same validation rules as the create endpoint.
-            updated_car = data.model_dump()
+    """Replace an existing car's editable content."""
+    car = db.update_car(car_id, data.model_dump())
 
-            #Editing the car doesnt/shouldnt change its id
-            updated_car["id"] = car_id
+    if car is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This car does not exist.",
+        )
 
-            # Replace the existing dictionoary rather than appending one
-            CARS[index] = updated_car
+    return car
 
-            return updated_car
 
-    # Updating a missing car does not create one
-    raise HTTPException(
-        status_code=404,
-        detail="This car doesnt exist."
-    )
-
-# DELETE Method - Remove an existing car
 @app.delete("/api/cars/{car_id}", status_code=204)
 def delete_car(car_id: int):
-    """Remove an existing car and return an empty sucecess response"""
-    for index, car in enumerate(CARS):
-        if car["id"] == car_id:
-            # Remove the matching dictionary from the shared in-memory list
-            del CARS[index]
+    """Delete a car and return an empty success response."""
+    deleted = db.delete_car(car_id)
 
-            # Return immediately: do not continue iterating after deletion
-            # HTTP 204 means success with no response body.
-            return Response(status_code=204)
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="This car does not exist.",
+        )
 
-    raise HTTPException(
-        status_code=404,
-        detail="This car does not exist."
-    )
-
-
+    return Response(status_code=204)

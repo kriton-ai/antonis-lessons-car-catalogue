@@ -114,7 +114,160 @@ def initialize():
 
         #6. Execution immediately resumes inside connect(), immediately after yield
 
+# Make the API read from SQLite
+def list_cars(q: str = "", category: str | None = None):
+    """Return cars matching the optional text and category filters."""
+    sql = """
+        SELECT id, name, category, manufacturer, variant, description, tip
+        FROM cars
+    """
 
+    # Build SQL from fixed clauses. User values go in a separate parameter list.
+    conditions = []
+    parameters = []
+
+    if category is not None:
+        conditions.append("category = ?")
+        parameters.append(category)
+
+    search_text = q.strip()
+
+    if search_text:
+        # || joins strings in SQLite.
+        # instr(text, search) returns 0 when the search text is absent.
+        # lower() makes this comparison case-insensitive for ASCII letters.
+        conditions.append(
+            """
+            instr(
+                lower(name || ' ' || manufacturer || ' ' || description),
+                lower(?)
+            ) > 0
+            """
+        )
+        parameters.append(search_text)
+
+    if conditions:
+        # Both filters must match when both were supplied.
+        sql += " WHERE " + " AND ".join(conditions)
+
+    # Database rows have no guaranteed order without ORDER BY.
+    sql += " ORDER BY id"
+
+    with connect() as connection:
+        rows = connection.execute(sql, parameters).fetchall()
+
+        # Convert SQLite Row objects into ordinary dictionaries for the API.
+        return [dict(row) for row in rows]
+
+# make the API read from SQLite.
+def get_car(car_id: int):
+    """Return a car dictionary, or None if the ID does not exist."""
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, name, category, manufacturer, variant, description, tip
+            FROM cars
+            WHERE id = ?
+            """,
+            (car_id,),
+        ).fetchone()
+        
+
+        if row is None:
+            return None
+
+        return dict(row)
+
+# Write changes to the application database. Create, edit, and delete cars in SQLite.
+def create_car(data: dict):
+    """Insert a car and return its stored content."""
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO cars (
+                name,
+                category,
+                manufacturer,
+                variant,
+                description,
+                tip
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["name"],
+                data["category"],
+                data["manufacturer"],
+                data["variant"],
+                data["description"],
+                data["tip"],
+            ),
+        )
+
+        #SQLite generates the ID. Read the new row using this same connection.
+        row = connection.execute(
+            """
+            SELECT id, name, category, manufacturer, variant, description, tip
+            FROM cars
+            WHERE id = ?
+            """,
+            (cursor.lastrowid,),
+        ).fetchone()
+
+        return dict(row)
+
+# Write changes to the application database.
+def update_car(car_id: int, data: dict):
+    """Replace a car's editable fields, or return None if it is missing."""
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE cars
+            SET name = ?,
+                category = ?,
+                manufacturer = ?,
+                variant = ?,
+                description = ?,
+                tip = ?
+            WHERE id = ?
+            """,
+            (
+                data["name"],
+                data["category"],
+                data["manufacturer"],
+                data["variant"],
+                data["description"],
+                data["tip"],
+                car_id,
+            ),
+        )
+
+        # No matching row means this ID does not exist.
+        if cursor.rowcount == 0:
+            return None
+
+        #Return the updated record while still inside the same transaction.
+        row = connection.execute(
+            """
+            SELECT id, name, category, manufacturer, variant, description, tip
+            FROM cars
+            WHERE id = ?
+            """,
+            (car_id,),
+        ).fetchone()
+
+        return dict(row)
+
+def delete_car(car_id: int):
+    """Return True if a car was deleted, or False if it was missing."""
+    with connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM cars WHERE id = ?",
+            (car_id,),
+        )
+
+        # A primary-key lookup can match at most one row.
+        return cursor.rowcount > 0
 
 if __name__ == "__main__":
     initialize() # 7. Initialize returns
